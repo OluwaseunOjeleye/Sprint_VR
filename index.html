@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+			margin: 0;
+			padding: 0;
+			width: 100%;
+			height: 100%;
+			
+			margin: 0;
+			overflow: hidden;
+			background-color: #AAAAAA;
+			background-attachment: fixed !important;
+			}
+		</style>
+		<style>
+			body {
+				font-family: Monospace;
+				margin: 0px;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+	<body>
+
+<script id="vertShader_screen" type="shader">
+varying vec2 vUv;
+uniform float curvature;
+
+void main() {
+    vUv = vec2(uv.x, uv.y);
+	float pos_z = curvature - sqrt((curvature*curvature)-(position.x*position.x));
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(vec3(position.x, position.y, pos_z), 1.0 );
+}
+</script>
+
+<script id="fragShader_screen" type="shader">
+precision highp float;
+uniform sampler2D image;
+uniform vec2 resolution;
+uniform int screen_color;
+
+float get_grayscale(vec4 color){
+	return 0.299*color.r + 0.587*color.g + 0.114*color.b;
+}
+
+varying vec2 vUv;
+void main(void) {
+	vec2 uv = vUv.xy;
+
+	if(screen_color == 1){
+		vec4 textureValue = texture2D(image, uv);
+		float pixel = get_grayscale(textureValue);
+		gl_FragColor = vec4(pixel,pixel, pixel, 1.0);
+	}
+	else if(screen_color == 2){
+		vec2 cellSize = 1.0 / resolution.xy;
+
+		mat3 kernel_x, kernel_y;
+		kernel_y[0] = vec3(-1.0, 0.0, 1.0);
+		kernel_y[1] = vec3(-2.0, 0.0, 2.0);
+		kernel_y[2] = vec3(-1.0, 0.0, 1.0);
+
+		kernel_x[0] = vec3(1.0, 2.0, 1.0);
+		kernel_x[1] = vec3(0.0, 0.0, 0.0);
+		kernel_x[2] = vec3(-1.0, -2.0, -1.0);
+
+		int sizeDiv2 = 1;
+		float x = 0., y = 0.;
+
+		for (int i=-sizeDiv2; i<=sizeDiv2; i++)
+			for (int j=-sizeDiv2; j<=sizeDiv2; j++){
+				float pixel = get_grayscale(texture2D( image, uv + vec2( float(i)*cellSize.x, float(j)*cellSize.y )));
+				y += kernel_y[i+sizeDiv2][j+sizeDiv2] * pixel;
+				x += kernel_x[i+sizeDiv2][j+sizeDiv2] * pixel;
+			}
+		
+		float mag = sqrt(x*x + y*y);
+		vec4 textureValue = texture2D(image, uv);
+		gl_FragColor = vec4(vec3(mag, mag, mag), 1.0);
+	}
+	else{
+		vec4 textureValue = texture2D(image, uv);
+		gl_FragColor = textureValue;
+	}
+	
+
+
+}
+</script>
+
+<script type="x-shader/x-vertex" id="vertShader_map">
+	varying vec2 vUv;
+	uniform float scaleElevation; 
+	uniform vec2 stepPixel;
+	uniform sampler2D image;
+
+	void main() {
+		vUv = uv;
+		vec3 color = texture2D (image, vUv).rgb;
+		float l = length(color);
+		vec3 tmp = position;
+		tmp.z = tmp.z + l*scaleElevation;
+		gl_Position = projectionMatrix * modelViewMatrix * vec4(tmp, 1.0);
+	}
+</script>
+
+<script type="x-shader/x-fragment" id="fragShader_map">
+	varying vec2 vUv;
+	uniform sampler2D image;
+
+	void main() {
+		vec3 color = texture2D (image, vUv ).rgb;
+		gl_FragColor.rgb = color;
+		gl_FragColor.a = 1.0;
+	}
+</script>
+
+<script type="x-shader/x-vertex" id="lightvertexshader">
+	uniform float discret; 
+	uniform float scaleElevation; 
+	uniform vec2 stepPixel;
+	uniform vec3 lightDir;
+	uniform float lightIntensity;
+	uniform sampler2D image;
+	varying vec2 vUv;
+	varying float NdotL;
+
+
+	float function ( vec4 color )
+	{
+		return length ( color.rgb );
+	} 
+
+	void main() {
+		vUv = uv;
+		float l = function ( texture2D ( image, vUv ) );
+		vec3 tmp = position;
+		tmp.z = tmp.z + l*scaleElevation;
+
+		float diffX = function(texture2D (image, vUv+vec2 (stepPixel.x*discret,0.0 ) ))-function(texture2D (image, vUv+vec2 (-stepPixel.x*discret,0.0 ) ));
+		float diffY = function(texture2D (image, vUv+vec2 (0.0,stepPixel.y*discret ) ))-function(texture2D (image, vUv+vec2 (0.0,-stepPixel.y*discret ) ));
+		vec3 normal = normalize(cross ( vec3 ( 1.0, 0.0, 6.0*scaleElevation*diffX ),
+										vec3 ( 0.0, 1.0, 6.0*scaleElevation*diffY ) ) );
+		NdotL = lightIntensity*(dot(normal, lightDir));
+
+		gl_Position = projectionMatrix * modelViewMatrix * vec4(tmp, 1.0);
+	}
+</script>
+
+<script type="x-shader/x-fragment" id="lightfragmentshader">
+	varying vec2 vUv;
+	varying float NdotL;
+
+	uniform sampler2D image;
+
+	void main() {
+		vec3 color = texture2D (image, vUv ).rgb;
+		gl_FragColor.rgb = vec3(NdotL)*color;
+		gl_FragColor.a = 1.0;
+	}
+</script>
+
+<script type="x-shader/x-vertex" id="RGBVertexShader">
+	uniform sampler2D image;
+	varying vec3 color;
+	uniform int color_Space;
+
+	vec3 RGB_to_Xyz(vec3 c){
+		vec3 tmp=vec3(
+			(c.r>.04045)?pow((c.r+.055)/1.055,2.4):c.r/12.92,
+			(c.g>.04045)?pow((c.g+.055)/1.055,2.4):c.g/12.92,
+			(c.b>.04045)?pow((c.b+.055)/1.055,2.4):c.b/12.92
+		);
+		mat3 mat=mat3(
+			.4124,.3576,.1805,
+			.2126,.7152,.0722,
+			.0193,.1192,.9505
+		);
+		return (tmp*mat);
+	}
+
+	vec3 RGB_to_HSV(vec3 c) {
+		float cMax=max(max(c.r,c.g),c.b), cMin=min(min(c.r,c.g),c.b), delta=cMax-cMin;
+		vec3 hsv=vec3(0.,0.,cMax);
+		if(cMax>cMin){
+			hsv.y=delta/cMax;
+			if(c.r==cMax){
+				hsv.x=(c.g-c.b)/delta;
+			}else if(c.g==cMax){
+				hsv.x=2.+(c.b-c.r)/delta;
+			}else{
+				hsv.x=4.+(c.r-c.g)/delta;
+			}
+			hsv.x=fract(hsv.x/6.);
+		}
+		return hsv;
+	}
+
+	void main() {
+		if (color_Space == 1) 		color = RGB_to_HSV(texture2D (image, position.xy).rgb);
+		else if (color_Space == 2) 	color = RGB_to_Xyz(texture2D (image, position.xy).rgb);
+		else	   					color = texture2D (image, position.xy).rgb;
+		gl_PointSize = 1.0;
+		gl_Position = projectionMatrix * modelViewMatrix * vec4(color-vec3(.5,.5,.5), 1.0);
+	}
+</script>
+
+<script type="x-shader/x-fragment" id="RGBFragmentShader">
+	varying vec3 color;
+
+	void main() {
+		gl_FragColor.rgb = color;
+		gl_FragColor.a = 1.0;
+	}
+</script>
+
+<script type="x-shader/x-vertex" id="ShadowRGBVertexShader">
+	uniform sampler2D image;
+	varying vec3 shadow_color;
+	uniform int color_Space;
+
+	vec3 RGB_to_Xyz(vec3 c){
+		vec3 tmp=vec3(
+			(c.r>.04045)?pow((c.r+.055)/1.055,2.4):c.r/12.92,
+			(c.g>.04045)?pow((c.g+.055)/1.055,2.4):c.g/12.92,
+			(c.b>.04045)?pow((c.b+.055)/1.055,2.4):c.b/12.92
+		);
+		mat3 mat=mat3(
+			.4124,.3576,.1805,
+			.2126,.7152,.0722,
+			.0193,.1192,.9505
+		);
+		return (tmp*mat);
+	}
+
+	vec3 RGB_to_HSV(vec3 c) {
+		float cMax=max(max(c.r,c.g),c.b), cMin=min(min(c.r,c.g),c.b), delta=cMax-cMin;
+		vec3 hsv=vec3(0.,0.,cMax);
+		if(cMax>cMin){
+			hsv.y=delta/cMax;
+			if(c.r==cMax){
+				hsv.x=(c.g-c.b)/delta;
+			}else if(c.g==cMax){
+				hsv.x=2.+(c.b-c.r)/delta;
+			}else{
+				hsv.x=4.+(c.r-c.g)/delta;
+			}
+			hsv.x=fract(hsv.x/6.);
+		}
+		return hsv;
+	}
+
+	void main() {
+		if (color_Space == 1) 		shadow_color = RGB_to_HSV(texture2D (image, position.xy).rgb);
+		else if (color_Space == 2) 	shadow_color = RGB_to_Xyz(texture2D (image, position.xy).rgb);
+		else	   					shadow_color = texture2D (image, position.xy).rgb;
+		gl_PointSize = 1.0;
+		vec4 pos = vec4(shadow_color-vec3(.5,.5, .5), 1.0); pos.y = 0.;
+		gl_Position = projectionMatrix * modelViewMatrix * pos;
+	}
+</script>
+
+<script type="x-shader/x-fragment" id="ShadowRGBFragmentShader">
+	varying vec3 shadow_color;
+
+	void main() {
+		gl_FragColor.rgb = vec3(0, 0, 0);
+		gl_FragColor.a = 0.7;
+	}
+</script>
+
+<script type="module" src="/main.js"></script>
+</body>
+</html>
